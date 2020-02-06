@@ -2,6 +2,7 @@ package npc
 
 import (
 	"fmt"
+	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -99,6 +100,7 @@ type selectorFn func(selector *selector) error
 type selectorWithPolicyTypeFn func(selector *selector, policyType policyType) error
 
 type selectorSet struct {
+	rwMutex       *sync.RWMutex
 	ips           ipset.Interface
 	onNewSelector selectorFn
 
@@ -118,6 +120,7 @@ type selectorSet struct {
 
 func newSelectorSet(ips ipset.Interface, onNewSelector selectorFn, onNewTargetSelector, onDestroyTargetSelector selectorWithPolicyTypeFn) *selectorSet {
 	return &selectorSet{
+		rwMutex:                 &sync.RWMutex{},
 		ips:                     ips,
 		onNewSelector:           onNewSelector,
 		onNewTargetSelector:     onNewTargetSelector,
@@ -130,6 +133,8 @@ func newSelectorSet(ips ipset.Interface, onNewSelector selectorFn, onNewTargetSe
 func (ss *selectorSet) addToMatchingPodSelector(user types.UID, podLabelsMap map[string]string, entry string, comment string) (bool, bool, error) {
 	foundIngress := false
 	foundEgress := false
+        ss.rwMutex.RLock()
+	defer ss.rwMutex.RUnlock()
 	for _, s := range ss.entries {
 		if s.matchesPodSelector(podLabelsMap) {
 			if ss.targetSelectorExist(s, policyTypeIngress) {
@@ -147,6 +152,8 @@ func (ss *selectorSet) addToMatchingPodSelector(user types.UID, podLabelsMap map
 }
 
 func (ss *selectorSet) addToMatchingNamespaceSelector(user types.UID, namespaceLabelsMap map[string]string, entry string, comment string) error {
+        ss.rwMutex.RLock()
+	defer ss.rwMutex.RUnlock()
 	for _, s := range ss.entries {
 		if s.matchesNamespaceSelector(namespaceLabelsMap) {
 			if err := s.addEntry(user, entry, comment); err != nil {
@@ -158,6 +165,8 @@ func (ss *selectorSet) addToMatchingNamespaceSelector(user types.UID, namespaceL
 }
 
 func (ss *selectorSet) addToMatchingNamespacedPodSelector(user types.UID, podLabelsMap map[string]string, namespaceLabelsMap map[string]string, entry string, comment string) error {
+        ss.rwMutex.RLock()
+	defer ss.rwMutex.RUnlock()
 	for _, s := range ss.entries {
 		if s.matchesNamespacedPodSelector(podLabelsMap, namespaceLabelsMap) {
 			if err := s.addEntry(user, entry, comment); err != nil {
@@ -169,6 +178,8 @@ func (ss *selectorSet) addToMatchingNamespacedPodSelector(user types.UID, podLab
 }
 
 func (ss *selectorSet) delFromMatchingPodSelector(user types.UID, podLabelsMap map[string]string, entry string) error {
+        ss.rwMutex.RLock()
+	defer ss.rwMutex.RUnlock()
 	for _, s := range ss.entries {
 		if s.matchesPodSelector(podLabelsMap) {
 			if err := s.delEntry(user, entry); err != nil {
@@ -180,6 +191,8 @@ func (ss *selectorSet) delFromMatchingPodSelector(user types.UID, podLabelsMap m
 }
 
 func (ss *selectorSet) delFromMatchingNamespaceSelector(user types.UID, namespaceLabelsMap map[string]string, entry string) error {
+        ss.rwMutex.RLock()
+	defer ss.rwMutex.RUnlock()
 	for _, s := range ss.entries {
 		if s.matchesNamespaceSelector(namespaceLabelsMap) {
 			if err := s.delEntry(user, entry); err != nil {
@@ -191,6 +204,8 @@ func (ss *selectorSet) delFromMatchingNamespaceSelector(user types.UID, namespac
 }
 
 func (ss *selectorSet) delFromMatchingNamespacedPodSelector(user types.UID, podLabelsMap map[string]string, namespaceLabelsMap map[string]string, entry string) error {
+        ss.rwMutex.RLock()
+	defer ss.rwMutex.RUnlock()
 	for _, s := range ss.entries {
 		if s.matchesNamespacedPodSelector(podLabelsMap, namespaceLabelsMap) {
 			if err := s.delEntry(user, entry); err != nil {
@@ -202,10 +217,14 @@ func (ss *selectorSet) delFromMatchingNamespacedPodSelector(user types.UID, podL
 }
 
 func (ss *selectorSet) targetSelectorExist(s *selector, policyType policyType) bool {
+        ss.rwMutex.RLock()
+	defer ss.rwMutex.RUnlock()
 	return ss.targetSelectorsCount[s.spec.key][policyType] > 0
 }
 
 func (ss *selectorSet) deprovision(user types.UID, current, desired map[string]*selectorSpec) error {
+        ss.rwMutex.Lock()
+	defer ss.rwMutex.Unlock()
 	for key, spec := range current {
 		if _, found := desired[key]; !found {
 			delete(ss.users[key], user)
@@ -234,6 +253,8 @@ func (ss *selectorSet) deprovision(user types.UID, current, desired map[string]*
 }
 
 func (ss *selectorSet) provision(user types.UID, current, desired map[string]*selectorSpec) error {
+        ss.rwMutex.Lock()
+	defer ss.rwMutex.Unlock()
 	for key, spec := range desired {
 		if _, found := current[key]; !found {
 			selector := &selector{ss.ips, spec}
