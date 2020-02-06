@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"fmt"
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/spf13/cobra"
@@ -38,6 +39,11 @@ func handleError(err error) { common.CheckFatal(err) }
 
 func makeController(getter cache.Getter, resource string,
 	objType runtime.Object, handlers cache.ResourceEventHandlerFuncs) cache.Controller {
+	defer func() {
+            if r := recover(); r != nil {
+                fmt.Println("Attempting to recover from panic...", r)
+            }
+        }()
 	listWatch := cache.NewListWatchFromClient(getter, resource, "", fields.Everything())
 	_, controller := cache.NewInformer(listWatch, objType, 0, handlers)
 	return controller
